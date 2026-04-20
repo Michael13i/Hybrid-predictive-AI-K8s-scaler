@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: predictive-llm-scaler
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: predictive-llm-scaler
+  namespace: default
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: predictive-llm-scaler
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: predictive-llm-scaler
+subjects:
+  - kind: ServiceAccount
+    name: predictive-llm-scaler
+    namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: predictive-llm-scaler
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: predictive-llm-scaler
+  template:
+    metadata:
+      labels:
+        app: predictive-llm-scaler
+    spec:
+      serviceAccountName: predictive-llm-scaler
+      containers:
+        - name: scaler
+          image: mikeilch/k8s-llm-agent:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: predictive-llm-scaler-config
+          resources:
+            requests:
+              cpu: 300m
+              memory: 768Mi
+            limits:
+              cpu: 800m
+              memory: 1.5Gi
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: predictive-llm-scaler-metrics
+  namespace: default
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: predictive-llm-scaler
+  ports:
+    - name: metrics
+      port: 8000
+      targetPort: 8000

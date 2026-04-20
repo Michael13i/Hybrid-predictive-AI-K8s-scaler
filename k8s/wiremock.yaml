@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wiremock
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wiremock
+  template:
+    metadata:
+      labels:
+        app: wiremock
+    spec:
+      nodeSelector:
+        worker: "true"
+      containers:
+      - name: wiremock
+        image: wiremock/wiremock:latest
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wiremock-service
+  namespace: default
+spec:
+  type: LoadBalancer
+  selector:
+    app: wiremock
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
