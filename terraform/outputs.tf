@@ -24,3 +24,15 @@ output "ollama_public_ip" {
 output "ollama_private_ip" {
   value = aws_instance.ollama.private_ip
 }
+
+output "eks_cluster_name" {
+  value = aws_eks_cluster.main.name
+}
+
+output "eks_cluster_endpoint" {
+  value = aws_eks_cluster.main.endpoint
+}
+
+output "eks_cluster_version" {
+  value = aws_eks_cluster.main.version
+}

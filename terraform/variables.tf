@@ -16,6 +16,8 @@ variable "environment" {
   default     = "dev"
 }
 
+#Networking (VPC, Subnets)
+
 variable "vpc_cidr" {
   description = "CIDR for VPC"
   type        = string
@@ -34,11 +36,7 @@ variable "public_subnet_b_cidr" {
   default     = "10.0.2.0/24"
 }
 
-variable "cluster_name" {
-  description = "EKS cluster name"
-  type        = string
-  default     = "predictive-llm-k8s-cluster"
-}
+#Ollama EC2
 
 variable "ollama_instance_type" {
   description = "EC2 instance type for Ollama"
@@ -56,4 +54,44 @@ variable "ssh_key_name" {
   description = "EC2 key pair name"
   type        = string
   default     = "mike-key-Frankfurt"
+}
+
+#EKS Cluster
+
+variable "cluster_name" {
+  description = "EKS cluster name"
+  type        = string
+  default     = "predictive-llm-k8s-cluster"
+}
+
+variable "cluster_version" {
+  description = "EKS Kubernetes version"
+  type        = string
+  default     = "1.31"
+}
+
+#EKS Node Group
+
+variable "node_instance_type" {
+  description = "Instance type for EKS worker nodes"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "node_desired_size" {
+  description = "Desired node group size"
+  type        = number
+  default     = 2
+}
+
+variable "node_min_size" {
+  description = "Minimum node group size"
+  type        = number
+  default     = 2
+}
+
+variable "node_max_size" {
+  description = "Maximum node group size"
+  type        = number
+  default     = 2
 }
