@@ -1,0 +1,3 @@
+aws_region   = "eu-central-1"
+project_name = "predictive-llm-k8s"
+environment  = "dev"
