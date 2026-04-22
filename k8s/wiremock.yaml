@@ -13,8 +13,8 @@ spec:
       labels:
         app: wiremock
     spec:
-      nodeSelector:
-        worker: "true"
+      #nodeSelector:
+      #  worker: "true"
       containers:
       - name: wiremock
         image: wiremock/wiremock:latest

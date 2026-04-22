@@ -46,7 +46,7 @@ spec:
       serviceAccountName: predictive-llm-scaler
       containers:
         - name: scaler
-          image: mikeilch/k8s-llm-agent:latest
+          image: mikeilch/k8s-llm-agent:v12
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
