@@ -17,7 +17,7 @@ spec:
       #  worker: "true"
       containers:
       - name: wiremock
-        image: wiremock/wiremock:latest
+        image: wiremock/wiremock:v12
         ports:
         - containerPort: 8080
         resources:
