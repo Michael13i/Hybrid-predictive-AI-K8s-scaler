@@ -1,0 +1,28 @@
+alertmanager:
+  enabled: true
+  persistentVolume:
+    enabled: true
+    storageClass: gp2
+    size: 5Gi
+
+server:
+  persistentVolume:
+    enabled: true
+    storageClass: gp2
+    size: 20Gi
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  extraArgs:
+    - --storage.tsdb.retention.time=3d
+
+pushgateway:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true

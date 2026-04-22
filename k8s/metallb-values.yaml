@@ -1,0 +1,36 @@
+controller:
+  enabled: true
+  logLevel: debug
+  image:
+    repository: quay.io/metallb/controller
+  strategy:
+    type: RollingUpdate
+  resources:
+    limits:
+      cpu: 100m
+      memory: 100Mi
+
+speaker:
+  enabled: true
+  logLevel: debug
+  tolerateMaster: true
+  memberlist:
+    enabled: true
+    mlBindPort: 7946
+    mlSecretKeyPath: "/etc/ml_secret_key"
+  excludeInterfaces:
+    enabled: true
+  image:
+    repository: quay.io/metallb/speaker
+  updateStrategy:
+    type: RollingUpdate
+  resources:
+    limits:
+      cpu: 100m
+      memory: 100Mi
+  frr:
+    enabled: false
+
+crds:
+  enabled: true
+  validationFailurePolicy: Fail

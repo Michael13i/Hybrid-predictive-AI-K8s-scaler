@@ -1,0 +1,21 @@
+alertmanager:
+  enabled: true
+  persistentVolume:
+    enabled: false
+
+server:
+  persistentVolume:
+    enabled: false
+
+  service:
+    type: LoadBalancer
+    port: 80
+
+pushgateway:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true
