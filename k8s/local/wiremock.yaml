@@ -13,11 +13,11 @@ spec:
       labels:
         app: wiremock
     spec:
-      #nodeSelector:
-      #  worker: "true"
+      nodeSelector:
+        worker: "true"
       containers:
       - name: wiremock
-        image: wiremock/wiremock:v12
+        image: wiremock/wiremock:latest
         ports:
         - containerPort: 8080
         resources:
