@@ -15,8 +15,7 @@ server:
     type: ClusterIP
     port: 80
 
-  extraArgs:
-    - --storage.tsdb.retention.time=3d
+  retention: "3d"
 
 pushgateway:
   enabled: true
