@@ -1,0 +1,79 @@
+name: Destroy AWS Environment and Delete Terraform State
+
+env:
+  AWS_REGION: "eu-central-1"
+  AWS_IAM_ROLE_ARN: "arn:aws:iam::655748577231:role/github-aws-integration-role"
+  EKS_CLUSTER_NAME: "predictive-llm-k8s-cluster"
+  STATE_BUCKET: "predictive-llm-k8s-tfstate-655748577231"
+
+permissions:
+  id-token: write
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: "Type DESTROY_AND_DELETE_STATE to confirm"
+        required: true
+        type: string
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    environment:
+      name: aws-eks-dev
+
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ inputs.confirm_destroy }}" != "DESTROY_AND_DELETE_STATE" ]; then
+            echo "Wrong confirmation. Type DESTROY_AND_DELETE_STATE."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_IAM_ROLE_ARN }}
+
+      - name: Test AWS credentials
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Try update kubeconfig
+        continue-on-error: true
+        run: aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+
+      - name: Cleanup Kubernetes resources before destroy
+        continue-on-error: true
+        run: |
+          kubectl delete -f k8s/aws/predictive-llm-scaler.yaml --ignore-not-found || true
+          kubectl delete -f k8s/aws/wiremock.yaml --ignore-not-found || true
+          kubectl delete -f k8s/generated/scaler-configmap.yaml --ignore-not-found || true
+          helm uninstall prometheus -n monitoring || true
+          kubectl delete namespace monitoring --ignore-not-found || true
+          kubectl get svc -A || true
+
+      - name: Wait for Kubernetes cloud cleanup
+        run: sleep 120
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: terraform destroy -auto-approve
+
+      - name: Delete Terraform state bucket only after successful destroy
+        run: |
+          echo "Terraform destroy succeeded. Deleting S3 state bucket..."
+          aws s3 rm s3://$STATE_BUCKET --recursive
+          aws s3api delete-bucket --bucket $STATE_BUCKET --region $AWS_REGION
