@@ -1,0 +1,81 @@
+name: Deploy to AWS EKS
+
+env:
+  AWS_REGION: "eu-central-1"
+  AWS_IAM_ROLE_ARN: "arn:aws:iam::655748577231:role/github-aws-integration-role"
+  EKS_CLUSTER_NAME: "predictive-llm-k8s-cluster"
+
+permissions:
+  id-token: write
+  contents: read
+
+on:
+  push:
+    branches:
+      - restructure-k8s-envs
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_IAM_ROLE_ARN }}
+
+      - name: Test AWS credentials
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+
+      - name: Add Helm repo
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Ensure monitoring namespace exists
+        run: kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Install or upgrade Prometheus
+        run: |
+          helm upgrade --install prometheus prometheus-community/prometheus \
+            -n monitoring \
+            -f k8s/aws/prometheus-values.yaml
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/generated/scaler-configmap.yaml
+          kubectl apply -f k8s/aws/wiremock.yaml
+          kubectl apply -f k8s/aws/predictive-llm-scaler.yaml
+
+      - name: Wait for deployments
+        run: |
+          kubectl rollout status deployment/wiremock --timeout=300s
+          kubectl rollout status deployment/predictive-llm-scaler --timeout=300s
+
+      - name: Show cluster state
+        run: |
+          kubectl get pods -A
+          kubectl get svc -A
