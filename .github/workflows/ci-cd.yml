@@ -1,9 +1,9 @@
-name: CI/CD Terraform EKS v2
+name: CI/CD Terraform EKS
 
 on:
   push:
     branches:
-      - restructure-k8s-envs
+      - main
 
   workflow_dispatch:
     inputs:
