@@ -1,0 +1,181 @@
+name: CI/CD Terraform EKS
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-eks
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+  EKS_CLUSTER_NAME: predictive-llm-k8s-cluster
+  ECR_REPOSITORY: predictive-llm-k8s-scaler
+  AWS_ROLE_ARN: arn:aws:iam::655748577231:role/github-aws-integration-role
+
+jobs:
+  ci:
+    name: Continuous Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform format check
+        working-directory: terraform
+        run: terraform fmt -check
+
+      - name: Terraform validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: terraform plan
+
+      - name: Docker build check
+        run: docker build -t predictive-llm-k8s-scaler:test -f app/Dockerfile app
+
+  cd:
+    name: Continuous Delivery
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform plan only
+        if: inputs.action == 'plan'
+        working-directory: terraform
+        run: terraform plan
+
+      - name: Terraform apply
+        if: inputs.action == 'apply'
+        working-directory: terraform
+        run: terraform apply -auto-approve
+
+      - name: Login to Amazon ECR
+        if: inputs.action == 'apply'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push scaler image
+        if: inputs.action == 'apply'
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f app/Dockerfile app
+          docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "IMAGE_URI=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+      - name: Update kubeconfig
+        if: inputs.action == 'apply' || inputs.action == 'destroy'
+        continue-on-error: true
+        run: |
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name $EKS_CLUSTER_NAME
+
+      - name: Deploy Kubernetes resources
+        if: inputs.action == 'apply'
+        run: |
+          kubectl apply -f k8s/generated/scaler-configmap.yaml
+          kubectl apply -f k8s/aws/wiremock.yaml
+          kubectl apply -f k8s/aws/predictive-llm-scaler.yaml
+
+      - name: Update scaler image
+        if: inputs.action == 'apply'
+        run: |
+          kubectl set image deployment/predictive-llm-scaler \
+            scaler=$IMAGE_URI \
+            -n default
+
+      - name: Wait for rollout
+        if: inputs.action == 'apply'
+        run: |
+          kubectl rollout status deployment/wiremock -n default --timeout=300s
+          kubectl rollout status deployment/predictive-llm-scaler -n default --timeout=300s
+
+      - name: Cleanup Kubernetes resources before destroy
+        if: inputs.action == 'destroy'
+        continue-on-error: true
+        run: |
+          kubectl delete -f k8s/aws/predictive-llm-scaler.yaml --ignore-not-found=true
+          kubectl delete -f k8s/aws/wiremock.yaml --ignore-not-found=true
+          kubectl delete -f k8s/generated/scaler-configmap.yaml --ignore-not-found=true
+          helm uninstall prometheus -n monitoring || true
+          kubectl get svc -A || true
+
+      - name: Wait for AWS load balancers cleanup
+        if: inputs.action == 'destroy'
+        continue-on-error: true
+        run: |
+          echo "Waiting for ELB/NLB cleanup..."
+          for i in {1..20}; do
+            ELB_COUNT=$(aws elb describe-load-balancers --region $AWS_REGION --query "length(LoadBalancerDescriptions)" --output text || echo 0)
+            ELBV2_COUNT=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "length(LoadBalancers)" --output text || echo 0)
+
+            echo "Classic ELB: $ELB_COUNT, ELBv2: $ELBV2_COUNT"
+
+            if [ "$ELB_COUNT" = "0" ] && [ "$ELBV2_COUNT" = "0" ]; then
+              echo "Load balancers removed."
+              exit 0
+            fi
+
+            sleep 30
+          done
+
+          echo "Continuing destroy after waiting."
+
+      - name: Terraform destroy
+        if: inputs.action == 'destroy'
+        working-directory: terraform
+        run: terraform destroy -auto-approve

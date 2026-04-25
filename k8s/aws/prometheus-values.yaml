@@ -1,0 +1,27 @@
+alertmanager:
+  enabled: true
+  persistentVolume:
+    enabled: true
+    storageClass: gp2
+    size: 5Gi
+
+server:
+  persistentVolume:
+    enabled: true
+    storageClass: gp2
+    size: 20Gi
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  retention: "3d"
+
+pushgateway:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true
