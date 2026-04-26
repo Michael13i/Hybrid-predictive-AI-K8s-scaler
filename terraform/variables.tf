@@ -41,7 +41,7 @@ variable "public_subnet_b_cidr" {
 variable "ollama_instance_type" {
   description = "EC2 instance type for Ollama"
   type        = string
-  default     = "c5.large"
+  default     = "t3.large"
 }
 
 variable "ollama_allowed_cidr" {
