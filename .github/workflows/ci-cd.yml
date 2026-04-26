@@ -124,6 +124,12 @@ jobs:
             --region $AWS_REGION \
             --name $EKS_CLUSTER_NAME
 
+      - name: Apply gp3 StorageClass
+        if: inputs.action == 'apply'
+        run: |
+          kubectl apply -f k8s/generated/gp3-storageclass.yaml
+          kubectl get storageclass
+
       - name: Add Helm repo
         if: inputs.action == 'apply'
         run: |
@@ -171,6 +177,7 @@ jobs:
         run: |
           kubectl get nodes
           kubectl get pods -A
+          kubectl get pvc -A
           kubectl get svc -A
 
       - name: Cleanup Kubernetes resources before destroy
@@ -187,6 +194,9 @@ jobs:
           fi
 
           helm uninstall prometheus -n monitoring || true
+          kubectl delete pvc -n monitoring --all || true
+          kubectl delete storageclass gp3 || true
+          kubectl get pvc -A || true
           kubectl get svc -A || true
 
       - name: Wait for AWS load balancers cleanup
