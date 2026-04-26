@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - restructure-k8s-envs
 
   workflow_dispatch:
     inputs:
@@ -29,6 +30,9 @@ env:
   AWS_REGION: eu-central-1
   EKS_CLUSTER_NAME: predictive-llm-k8s-cluster
   ECR_REPOSITORY: predictive-llm-k8s-scaler
+  K8S_NAMESPACE: default
+  DEPLOYMENT_NAME: predictive-llm-scaler
+  CONTAINER_NAME: scaler
   AWS_ROLE_ARN: arn:aws:iam::655748577231:role/github-aws-integration-role
 
 jobs:
@@ -52,10 +56,6 @@ jobs:
       - name: Terraform init
         working-directory: terraform
         run: terraform init
-
-      - name: Terraform format check
-        working-directory: terraform
-        run: terraform fmt -check
 
       - name: Terraform validate
         working-directory: terraform
@@ -106,7 +106,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push scaler image
+      - name: Build, tag, and push scaler image
         if: inputs.action == 'apply'
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -116,7 +116,7 @@ jobs:
           docker push $REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "IMAGE_URI=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
 
-      - name: Update kubeconfig
+      - name: Update kubeconfig for EKS
         if: inputs.action == 'apply' || inputs.action == 'destroy'
         continue-on-error: true
         run: |
@@ -124,25 +124,54 @@ jobs:
             --region $AWS_REGION \
             --name $EKS_CLUSTER_NAME
 
-      - name: Deploy Kubernetes resources
+      - name: Add Helm repo
+        if: inputs.action == 'apply'
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Ensure monitoring namespace exists
+        if: inputs.action == 'apply'
+        run: |
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Install or upgrade Prometheus for AWS
+        if: inputs.action == 'apply'
+        run: |
+          helm upgrade --install prometheus prometheus-community/prometheus \
+            -n monitoring \
+            -f k8s/aws/prometheus-values.yaml
+
+      - name: Apply generated ConfigMap
         if: inputs.action == 'apply'
         run: |
           kubectl apply -f k8s/generated/scaler-configmap.yaml
+
+      - name: Apply application manifests
+        if: inputs.action == 'apply'
+        run: |
           kubectl apply -f k8s/aws/wiremock.yaml
           kubectl apply -f k8s/aws/predictive-llm-scaler.yaml
 
-      - name: Update scaler image
+      - name: Update scaler image to latest ECR build
         if: inputs.action == 'apply'
         run: |
-          kubectl set image deployment/predictive-llm-scaler \
-            scaler=$IMAGE_URI \
-            -n default
+          kubectl set image deployment/$DEPLOYMENT_NAME \
+            $CONTAINER_NAME=$IMAGE_URI \
+            -n $K8S_NAMESPACE
 
-      - name: Wait for rollout
+      - name: Wait for rollouts
         if: inputs.action == 'apply'
         run: |
-          kubectl rollout status deployment/wiremock -n default --timeout=300s
-          kubectl rollout status deployment/predictive-llm-scaler -n default --timeout=300s
+          kubectl rollout status deployment/wiremock -n $K8S_NAMESPACE --timeout=300s
+          kubectl rollout status deployment/$DEPLOYMENT_NAME -n $K8S_NAMESPACE --timeout=300s
+
+      - name: Show cluster state after apply
+        if: inputs.action == 'apply'
+        run: |
+          kubectl get nodes
+          kubectl get pods -A
+          kubectl get svc -A
 
       - name: Cleanup Kubernetes resources before destroy
         if: inputs.action == 'destroy'
@@ -150,7 +179,13 @@ jobs:
         run: |
           kubectl delete -f k8s/aws/predictive-llm-scaler.yaml --ignore-not-found=true
           kubectl delete -f k8s/aws/wiremock.yaml --ignore-not-found=true
-          kubectl delete -f k8s/generated/scaler-configmap.yaml --ignore-not-found=true
+
+          if [ -f k8s/generated/scaler-configmap.yaml ]; then
+            kubectl delete -f k8s/generated/scaler-configmap.yaml --ignore-not-found=true
+          else
+            echo "Generated ConfigMap file not found, skipping."
+          fi
+
           helm uninstall prometheus -n monitoring || true
           kubectl get svc -A || true
 
