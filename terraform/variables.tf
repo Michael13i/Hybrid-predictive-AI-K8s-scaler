@@ -95,3 +95,17 @@ variable "node_max_size" {
   type        = number
   default     = 1
 }
+
+
+
+variable "local_admin_principal_arn" {
+  description = "IAM principal ARN for local kubectl access"
+  type        = string
+  default     = "arn:aws:iam::655748577231:user/terraform"
+}
+
+variable "github_actions_role_arn" {
+  description = "IAM role ARN used by GitHub Actions OIDC"
+  type        = string
+  default     = "arn:aws:iam::655748577231:role/github-aws-integration-role"
+}
