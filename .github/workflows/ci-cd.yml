@@ -178,6 +178,7 @@ jobs:
           kubectl get nodes
           kubectl get pods -A
           kubectl get pvc -A
+          kubectl get pv
           kubectl get svc -A
 
       - name: Cleanup Kubernetes resources before destroy
@@ -194,19 +195,72 @@ jobs:
           fi
 
           helm uninstall prometheus -n monitoring || true
-          kubectl delete pvc -n monitoring --all || true
-          kubectl delete storageclass gp3 || true
+
+          echo "Deleting all PVCs..."
+          kubectl delete pvc --all -A --ignore-not-found=true || true
+
+          echo "Waiting for PVC deletion..."
+          kubectl wait --for=delete pvc --all -A --timeout=180s || true
+
+          echo "Deleting remaining PVs..."
+          kubectl delete pv --all --ignore-not-found=true || true
+
+          echo "Waiting for PV deletion..."
+          kubectl wait --for=delete pv --all --timeout=180s || true
+
+          kubectl delete storageclass gp3 --ignore-not-found=true || true
+
           kubectl get pvc -A || true
+          kubectl get pv || true
           kubectl get svc -A || true
+
+      - name: Wait for EBS volumes cleanup
+        if: inputs.action == 'destroy'
+        continue-on-error: true
+        run: |
+          echo "Waiting for EBS volumes created by Kubernetes PVCs..."
+
+          for i in {1..30}; do
+            VOLUMES=$(aws ec2 describe-volumes \
+              --region $AWS_REGION \
+              --filters "Name=status,Values=available" \
+              --query "Volumes[?contains(Tags[?Key=='Name'].Value | [0], 'dynamic-pvc')].VolumeId" \
+              --output text)
+
+            if [ -z "$VOLUMES" ]; then
+              echo "No leftover EBS volumes found."
+              exit 0
+            fi
+
+            echo "Still existing EBS volumes: $VOLUMES"
+            sleep 10
+          done
+
+          echo "Deleting orphaned EBS volumes manually..."
+
+          for VOL in $VOLUMES; do
+            echo "Deleting volume $VOL"
+            aws ec2 delete-volume \
+              --region $AWS_REGION \
+              --volume-id "$VOL"
+          done
 
       - name: Wait for AWS load balancers cleanup
         if: inputs.action == 'destroy'
         continue-on-error: true
         run: |
           echo "Waiting for ELB/NLB cleanup..."
+
           for i in {1..20}; do
-            ELB_COUNT=$(aws elb describe-load-balancers --region $AWS_REGION --query "length(LoadBalancerDescriptions)" --output text || echo 0)
-            ELBV2_COUNT=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "length(LoadBalancers)" --output text || echo 0)
+            ELB_COUNT=$(aws elb describe-load-balancers \
+              --region $AWS_REGION \
+              --query "length(LoadBalancerDescriptions)" \
+              --output text || echo 0)
+
+            ELBV2_COUNT=$(aws elbv2 describe-load-balancers \
+              --region $AWS_REGION \
+              --query "length(LoadBalancers)" \
+              --output text || echo 0)
 
             echo "Classic ELB: $ELB_COUNT, ELBv2: $ELBV2_COUNT"
 
